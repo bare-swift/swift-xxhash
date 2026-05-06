@@ -349,3 +349,153 @@ extension XXHash {
         }
     }
 }
+
+extension XXHash {
+    // MARK: - XXH3-128 small-input mixers
+
+    static func _xxh3_len_1to3_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        let c1 = UInt32(input[0])
+        let c2 = UInt32(input[len >> 1])
+        let c3 = UInt32(input[len - 1])
+        let combinedl = (c1 << 16) | (c2 << 24) | c3 | (UInt32(len) << 8)
+        // C ref: combinedh = rotl32(swap32(combinedl), 13)
+        let swapped = combinedl.byteSwapped
+        let combinedh = (swapped &<< 13) | (swapped &>> 19)
+        let bitflipl = UInt64(_readLE32Secret(secret, 0)  ^ _readLE32Secret(secret, 4))  &+ seed
+        let bitfliph = UInt64(_readLE32Secret(secret, 8)  ^ _readLE32Secret(secret, 12)) &- seed
+        let keyedLo = UInt64(combinedl) ^ bitflipl
+        let keyedHi = UInt64(combinedh) ^ bitfliph
+        return Hash128(high: _xxh64_avalanche(keyedHi), low: _xxh64_avalanche(keyedLo))
+    }
+
+    static func _xxh3_len_4to8_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        let s = seed ^ (UInt64(UInt32(seed & 0xFFFFFFFF).byteSwapped) << 32)
+        let inputLo = UInt64(_readLE32(input, 0))
+        let inputHi = UInt64(_readLE32(input, len - 4))
+        let inp64 = inputLo | (inputHi << 32)
+        let bitflip = (_readLE64Secret(secret, 16) ^ _readLE64Secret(secret, 24)) &- s
+        let keyed = inp64 ^ bitflip
+        var m = _xxh3_mult64To128(keyed, p64_1 &+ (UInt64(len) << 2))
+        m.high &+= m.low << 1
+        var lo = m.low ^ (m.high >> 3)
+        lo ^= lo >> 35
+        lo = lo &* 0x9FB21C651E98DF25
+        lo ^= lo >> 28
+        let hi = _xxh3_avalanche(m.high)
+        return Hash128(high: hi, low: lo)
+    }
+
+    static func _xxh3_len_9to16_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        let bitflipl = (_readLE64Secret(secret, 32) ^ _readLE64Secret(secret, 40)) &- seed
+        let bitfliph = (_readLE64Secret(secret, 48) ^ _readLE64Secret(secret, 56)) &+ seed
+        let inputLo = _readLE64(input, 0)
+        var inputHi = _readLE64(input, len - 8)
+        var m = _xxh3_mult64To128(inputLo ^ inputHi ^ bitflipl, p64_1)
+        m.low &+= UInt64(len - 1) << 54
+        inputHi ^= bitfliph
+        // high += input_hi + mult32to64(input_hi, p32_2 - 1)
+        m.high &+= inputHi &+ _xxh3_mul32To64(inputHi, UInt64(p32_2) &- 1)
+        m.low ^= m.high.byteSwapped
+        // h = mult64to128(low, p64_2); h.high += high * p64_2; avalanche both
+        var h = _xxh3_mult64To128(m.low, p64_2)
+        h.high &+= m.high &* p64_2
+        return Hash128(high: _xxh3_avalanche(h.high), low: _xxh3_avalanche(h.low))
+    }
+
+    static func _xxh3_len_0to16_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        if len > 8  { return _xxh3_len_9to16_128b(input, len, secret, seed) }
+        if len >= 4 { return _xxh3_len_4to8_128b(input, len, secret, seed) }
+        if len > 0  { return _xxh3_len_1to3_128b(input, len, secret, seed) }
+        // len == 0
+        let bitflipl = _readLE64Secret(secret, 64) ^ _readLE64Secret(secret, 72)
+        let bitfliph = _readLE64Secret(secret, 80) ^ _readLE64Secret(secret, 88)
+        return Hash128(
+            high: _xxh64_avalanche(seed ^ bitfliph),
+            low:  _xxh64_avalanche(seed ^ bitflipl)
+        )
+    }
+
+    /// 32-byte mixer for 128-bit output (mirrors C XXH128_mix32B).
+    /// Takes two distinct 16-byte input regions; secret bytes 0..15 mix with
+    /// input_1 into low; secret bytes 16..31 mix with input_2 into high.
+    @inlinable
+    static func _xxh128_mix32B(_ acc: Hash128, _ input1: UnsafePointer<UInt8>, _ in1Off: Int, _ input2: UnsafePointer<UInt8>, _ in2Off: Int, _ secret: [UInt8], _ secretOffset: Int, _ seed: UInt64) -> Hash128 {
+        var lo = acc.low
+        var hi = acc.high
+        lo &+= _xxh3_mix16B(input1, in1Off, secret, secretOffset,      seed)
+        lo  ^= _readLE64(input2, in2Off) &+ _readLE64(input2, in2Off + 8)
+        hi &+= _xxh3_mix16B(input2, in2Off, secret, secretOffset + 16, seed)
+        hi  ^= _readLE64(input1, in1Off) &+ _readLE64(input1, in1Off + 8)
+        return Hash128(high: hi, low: lo)
+    }
+
+    static func _xxh3_len_17to128_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        var acc = Hash128(high: 0, low: UInt64(len) &* p64_1)
+        if len > 32 {
+            if len > 64 {
+                if len > 96 {
+                    acc = _xxh128_mix32B(acc, input, 48,        input, len - 64, secret, 96, seed)
+                }
+                acc = _xxh128_mix32B(acc, input, 32,            input, len - 48, secret, 64, seed)
+            }
+            acc = _xxh128_mix32B(acc, input, 16,                input, len - 32, secret, 32, seed)
+        }
+        acc = _xxh128_mix32B(acc, input, 0,                     input, len - 16, secret, 0,  seed)
+        let low64  = acc.low &+ acc.high
+        let high64 = (acc.low &* p64_1) &+ (acc.high &* p64_4) &+ ((UInt64(len) &- seed) &* p64_2)
+        return Hash128(
+            high: 0 &- _xxh3_avalanche(high64),
+            low:  _xxh3_avalanche(low64)
+        )
+    }
+
+    static func _xxh3_len_129to240_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8], _ seed: UInt64) -> Hash128 {
+        let nbRounds = len / 32
+        var acc = Hash128(high: 0, low: UInt64(len) &* p64_1)
+        for i in 0..<4 {
+            acc = _xxh128_mix32B(acc, input, 32 * i, input, 32 * i + 16, secret, 32 * i, seed)
+        }
+        acc = Hash128(high: _xxh3_avalanche(acc.high), low: _xxh3_avalanche(acc.low))
+        for i in 4..<nbRounds {
+            acc = _xxh128_mix32B(acc, input, 32 * i, input, 32 * i + 16, secret, 3 + 32 * (i - 4), seed)
+        }
+        // Last 32 bytes (overlapping). Note: input pointers REVERSED, seed negated.
+        // C: input + len - 16  (input_1)  and  input + len - 32  (input_2)
+        // C: secret + XXH3_SECRETSIZE_MIN(136) - XXH3_MIDSIZE_LASTOFFSET(17) - 16 = 103
+        acc = _xxh128_mix32B(acc, input, len - 16, input, len - 32, secret, 136 - 17 - 16, 0 &- seed)
+        let low64  = acc.low &+ acc.high
+        let high64 = (acc.low &* p64_1) &+ (acc.high &* p64_4) &+ ((UInt64(len) &- seed) &* p64_2)
+        return Hash128(
+            high: 0 &- _xxh3_avalanche(high64),
+            low:  _xxh3_avalanche(low64)
+        )
+    }
+
+    // MARK: - XXH3-128 long-input path
+
+    static func _xxh3_hashLong_128b(_ input: UnsafePointer<UInt8>, _ len: Int, _ secret: [UInt8]) -> Hash128 {
+        var acc = _xxh3_initialAcc()
+        let stripesPerBlock = (xxh3SecretSize - xxh3StripeLen) / xxh3SecretConsumeRate
+        let blockLen = stripesPerBlock * xxh3StripeLen
+        let nbBlocks = (len - 1) / blockLen
+        for block in 0..<nbBlocks {
+            _xxh3_accumulate(&acc, input, block * blockLen, secret, 0, stripesPerBlock)
+            _xxh3_scrambleAcc(&acc, secret)
+        }
+        let trailingLen = len - nbBlocks * blockLen
+        let nbStripes = (trailingLen - 1) / xxh3StripeLen
+        _xxh3_accumulate(&acc, input, nbBlocks * blockLen, secret, 0, nbStripes)
+        _xxh3_accumulate_512(&acc, input, len - xxh3StripeLen, secret, xxh3SecretSize - xxh3StripeLen - 7)
+        let low  = _xxh3_mergeAccs64(acc, secret, 11, UInt64(len) &* p64_1)
+        // high uses end-of-secret offset: secretSize - 64 - 11 = 192 - 64 - 11 = 117
+        let high = _xxh3_mergeAccs64(acc, secret, xxh3SecretSize - 64 - 11, ~(UInt64(len) &* p64_2))
+        return Hash128(high: high, low: low)
+    }
+
+    static func _xxh3_128bits_internal(_ input: UnsafePointer<UInt8>, _ len: Int, _ seed: UInt64, _ customSecret: [UInt8]) -> Hash128 {
+        if len <= 16  { return _xxh3_len_0to16_128b(input, len, xxh3DefaultSecret, seed) }
+        if len <= 128 { return _xxh3_len_17to128_128b(input, len, xxh3DefaultSecret, seed) }
+        if len <= xxh3MidSizeMax { return _xxh3_len_129to240_128b(input, len, xxh3DefaultSecret, seed) }
+        return _xxh3_hashLong_128b(input, len, customSecret)
+    }
+}

@@ -39,7 +39,7 @@ public enum XXHash: Sendable {
             if let p = buf.baseAddress {
                 return _xxh3_64bits_internal(p, buf.count, seed, secret)
             }
-            return _xxh64_avalanche(seed ^ _readLE64Secret(secret, 56) ^ _readLE64Secret(secret, 64))
+            return _xxh64_avalanche(seed ^ _readLE64Secret(xxh3DefaultSecret, 56) ^ _readLE64Secret(xxh3DefaultSecret, 64))
         }) {
             return result
         }
@@ -48,7 +48,33 @@ public enum XXHash: Sendable {
             if let p = buf.baseAddress {
                 return _xxh3_64bits_internal(p, buf.count, seed, secret)
             }
-            return _xxh64_avalanche(seed ^ _readLE64Secret(secret, 56) ^ _readLE64Secret(secret, 64))
+            return _xxh64_avalanche(seed ^ _readLE64Secret(xxh3DefaultSecret, 56) ^ _readLE64Secret(xxh3DefaultSecret, 64))
+        }
+    }
+
+    /// XXH3-128 one-shot. 128-bit modern xxHash. Wire-compatible with the C
+    /// reference (`xxhsum -H128`).
+    public static func xxh3_128(_ bytes: some Sequence<UInt8>, seed: UInt64 = 0) -> Hash128 {
+        let secret = _xxh3_customSecret(seed: seed)
+        let emptyResult: Hash128 = {
+            let bitflipl = _readLE64Secret(xxh3DefaultSecret, 64) ^ _readLE64Secret(xxh3DefaultSecret, 72)
+            let bitfliph = _readLE64Secret(xxh3DefaultSecret, 80) ^ _readLE64Secret(xxh3DefaultSecret, 88)
+            return Hash128(high: _xxh64_avalanche(seed ^ bitfliph), low: _xxh64_avalanche(seed ^ bitflipl))
+        }()
+        if let result = bytes.withContiguousStorageIfAvailable({ buf -> Hash128 in
+            if let p = buf.baseAddress {
+                return _xxh3_128bits_internal(p, buf.count, seed, secret)
+            }
+            return emptyResult
+        }) {
+            return result
+        }
+        let array = Array(bytes)
+        return array.withUnsafeBufferPointer { buf in
+            if let p = buf.baseAddress {
+                return _xxh3_128bits_internal(p, buf.count, seed, secret)
+            }
+            return emptyResult
         }
     }
 }
