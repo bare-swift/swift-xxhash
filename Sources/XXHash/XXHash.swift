@@ -2,11 +2,18 @@
 // Copyright (c) 2026 The bare-swift Project Authors.
 
 /// Sendable, Foundation-free xxHash (XXH32, XXH64, XXH3-64, XXH3-128).
-///
-/// Wire-compatible with the upstream C reference (`xxhsum`) and the
-/// `twox-hash` Rust crate. Use the one-shot helpers (``xxh32(_:seed:)``,
-/// ``xxh64(_:seed:)``, ``xxh3_64(_:seed:)``, ``xxh3_128(_:seed:)``) for
-/// single-buffer hashing, or the streaming ``Digest32`` / ``Digest64`` /
-/// ``Digest3_64`` / ``Digest3_128`` value types when input arrives in
-/// pieces.
-public enum XXHash: Sendable {}
+public enum XXHash: Sendable {
+    /// XXH32 one-shot. 32-bit non-cryptographic hash; legacy. Wire-compatible
+    /// with the C reference (`xxhsum -H32`) and the LZ4 frame format.
+    public static func xxh32(_ bytes: some Sequence<UInt8>, seed: UInt32 = 0) -> UInt32 {
+        if let result = bytes.withContiguousStorageIfAvailable({ buf -> UInt32 in
+            buf.baseAddress.map { _xxh32($0, buf.count, seed) } ?? (seed &+ p32_5)
+        }) {
+            return result
+        }
+        let array = Array(bytes)
+        return array.withUnsafeBufferPointer { buf in
+            buf.baseAddress.map { _xxh32($0, buf.count, seed) } ?? (seed &+ p32_5)
+        }
+    }
+}
