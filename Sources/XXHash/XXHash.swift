@@ -16,4 +16,18 @@ public enum XXHash: Sendable {
             buf.baseAddress.map { _xxh32($0, buf.count, seed) } ?? (seed &+ p32_5)
         }
     }
+
+    /// XXH64 one-shot. 64-bit non-cryptographic hash; legacy. Wire-compatible
+    /// with the C reference (`xxhsum -H64`) and zstd content checksums.
+    public static func xxh64(_ bytes: some Sequence<UInt8>, seed: UInt64 = 0) -> UInt64 {
+        if let result = bytes.withContiguousStorageIfAvailable({ buf -> UInt64 in
+            buf.baseAddress.map { _xxh64($0, buf.count, seed) } ?? (seed &+ p64_5)
+        }) {
+            return result
+        }
+        let array = Array(bytes)
+        return array.withUnsafeBufferPointer { buf in
+            buf.baseAddress.map { _xxh64($0, buf.count, seed) } ?? (seed &+ p64_5)
+        }
+    }
 }
