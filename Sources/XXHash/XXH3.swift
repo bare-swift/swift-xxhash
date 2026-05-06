@@ -499,3 +499,73 @@ extension XXHash {
         return _xxh3_hashLong_128b(input, len, customSecret)
     }
 }
+
+extension XXHash {
+    /// Streaming XXH3-128 digest. Same state shape as ``Digest3_64``;
+    /// finalize merges into a 128-bit ``Hash128``.
+    public struct Digest3_128: Sendable {
+        @usableFromInline var acc: [UInt64]
+        @usableFromInline let secret: [UInt8]
+        @usableFromInline let seed: UInt64
+        @usableFromInline var stripeBuffer: [UInt8] = []
+        @usableFromInline var stripesSoFarInBlock: Int = 0
+        @usableFromInline var totalLen: UInt64 = 0
+        @usableFromInline var fastPathBuffer: [UInt8] = []
+        @usableFromInline var lastStripe: [UInt8] = []
+
+        public init(seed: UInt64 = 0) {
+            self.seed = seed
+            self.secret = XXHash._xxh3_customSecret(seed: seed)
+            self.acc = XXHash._xxh3_initialAcc()
+            stripeBuffer.reserveCapacity(64)
+            lastStripe.reserveCapacity(64)
+        }
+
+        public mutating func update(_ bytes: some Sequence<UInt8>) {
+            for byte in bytes {
+                if totalLen <= UInt64(XXHash.xxh3MidSizeMax) {
+                    fastPathBuffer.append(byte)
+                }
+                stripeBuffer.append(byte)
+                totalLen &+= 1
+            }
+            while stripeBuffer.count >= XXHash.xxh3StripeLen {
+                let stripe = Array(stripeBuffer.prefix(XXHash.xxh3StripeLen))
+                stripe.withUnsafeBufferPointer { buf in
+                    let p = buf.baseAddress!
+                    let secretOff = stripesSoFarInBlock * XXHash.xxh3SecretConsumeRate
+                    XXHash._xxh3_accumulate_512(&acc, p, 0, secret, secretOff)
+                }
+                lastStripe = stripe
+                stripeBuffer.removeFirst(XXHash.xxh3StripeLen)
+                stripesSoFarInBlock += 1
+                if stripesSoFarInBlock == (XXHash.xxh3SecretSize - XXHash.xxh3StripeLen) / XXHash.xxh3SecretConsumeRate {
+                    XXHash._xxh3_scrambleAcc(&acc, secret)
+                    stripesSoFarInBlock = 0
+                }
+            }
+        }
+
+        public func finalize() -> Hash128 {
+            if totalLen <= UInt64(XXHash.xxh3MidSizeMax) {
+                return fastPathBuffer.withUnsafeBufferPointer { buf -> Hash128 in
+                    let p = buf.baseAddress ?? UnsafePointer<UInt8>(bitPattern: 1)!
+                    return XXHash._xxh3_128bits_internal(p, Int(totalLen), seed, secret)
+                }
+            }
+            var localAcc = acc
+            var finalStripe = [UInt8](repeating: 0, count: XXHash.xxh3StripeLen)
+            let pendingCount = stripeBuffer.count
+            let fromLast = XXHash.xxh3StripeLen - pendingCount
+            for i in 0..<fromLast { finalStripe[i] = lastStripe[lastStripe.count - fromLast + i] }
+            for i in 0..<pendingCount { finalStripe[fromLast + i] = stripeBuffer[i] }
+            finalStripe.withUnsafeBufferPointer { buf in
+                let p = buf.baseAddress!
+                XXHash._xxh3_accumulate_512(&localAcc, p, 0, secret, XXHash.xxh3SecretSize - XXHash.xxh3StripeLen - 7)
+            }
+            let low  = XXHash._xxh3_mergeAccs64(localAcc, secret, 11, totalLen &* XXHash.p64_1)
+            let high = XXHash._xxh3_mergeAccs64(localAcc, secret, XXHash.xxh3SecretSize - 64 - 11, ~(totalLen &* XXHash.p64_2))
+            return Hash128(high: high, low: low)
+        }
+    }
+}
