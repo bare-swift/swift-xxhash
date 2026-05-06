@@ -308,7 +308,11 @@ extension XXHash {
                 stripeBuffer.append(byte)
                 totalLen &+= 1
             }
-            while stripeBuffer.count >= XXHash.xxh3StripeLen {
+            // Drain only when there is MORE than one stripe in the buffer; the
+            // final stripe is reserved so finalize() can apply the overlapping
+            // last-stripe accumulate against the special secret offset (matches
+            // the one-shot long-path behaviour).
+            while stripeBuffer.count > XXHash.xxh3StripeLen {
                 let stripe = Array(stripeBuffer.prefix(XXHash.xxh3StripeLen))
                 stripe.withUnsafeBufferPointer { buf in
                     let p = buf.baseAddress!
@@ -529,7 +533,11 @@ extension XXHash {
                 stripeBuffer.append(byte)
                 totalLen &+= 1
             }
-            while stripeBuffer.count >= XXHash.xxh3StripeLen {
+            // Drain only when there is MORE than one stripe in the buffer; the
+            // final stripe is reserved so finalize() can apply the overlapping
+            // last-stripe accumulate against the special secret offset (matches
+            // the one-shot long-path behaviour).
+            while stripeBuffer.count > XXHash.xxh3StripeLen {
                 let stripe = Array(stripeBuffer.prefix(XXHash.xxh3StripeLen))
                 stripe.withUnsafeBufferPointer { buf in
                     let p = buf.baseAddress!
