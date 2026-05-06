@@ -72,3 +72,73 @@ extension XXHash {
         return _xxh32_avalanche(hash)
     }
 }
+
+extension XXHash {
+    /// Streaming XXH32 digest. Buffers up to 16 bytes of pending input; flushes
+    /// a stripe when full; replays the unconsumed tail at finalize time.
+    public struct Digest32: Sendable {
+        @usableFromInline var v1: UInt32
+        @usableFromInline var v2: UInt32
+        @usableFromInline var v3: UInt32
+        @usableFromInline var v4: UInt32
+        @usableFromInline let seed: UInt32
+        @usableFromInline var totalLen: UInt64 = 0
+        @usableFromInline var buffer: [UInt8] = []
+
+        public init(seed: UInt32 = 0) {
+            self.seed = seed
+            self.v1 = seed &+ XXHash.p32_1 &+ XXHash.p32_2
+            self.v2 = seed &+ XXHash.p32_2
+            self.v3 = seed
+            self.v4 = seed &- XXHash.p32_1
+            self.buffer.reserveCapacity(16)
+        }
+
+        public mutating func update(_ bytes: some Sequence<UInt8>) {
+            for byte in bytes {
+                buffer.append(byte)
+                totalLen &+= 1
+            }
+            while buffer.count >= 16 {
+                buffer.withUnsafeBufferPointer { buf in
+                    let p = buf.baseAddress!
+                    v1 = XXHash._xxh32_round(v1, XXHash._readLE32(p, 0))
+                    v2 = XXHash._xxh32_round(v2, XXHash._readLE32(p, 4))
+                    v3 = XXHash._xxh32_round(v3, XXHash._readLE32(p, 8))
+                    v4 = XXHash._xxh32_round(v4, XXHash._readLE32(p, 12))
+                }
+                buffer.removeFirst(16)
+            }
+        }
+
+        public func finalize() -> UInt32 {
+            var hash: UInt32
+            if totalLen >= 16 {
+                hash = ((v1 << 1)  | (v1 >> 31))
+                     &+ ((v2 << 7)  | (v2 >> 25))
+                     &+ ((v3 << 12) | (v3 >> 20))
+                     &+ ((v4 << 18) | (v4 >> 14))
+            } else {
+                hash = seed &+ XXHash.p32_5
+            }
+            hash = hash &+ UInt32(truncatingIfNeeded: totalLen)
+            return buffer.withUnsafeBufferPointer { buf -> UInt32 in
+                let p = buf.baseAddress!
+                let n = buf.count
+                var i = 0
+                var h = hash
+                while i + 4 <= n {
+                    h = h &+ XXHash._readLE32(p, i) &* XXHash.p32_3
+                    h = ((h << 17) | (h >> 15)) &* XXHash.p32_4
+                    i += 4
+                }
+                while i < n {
+                    h = h &+ UInt32(p[i]) &* XXHash.p32_5
+                    h = ((h << 11) | (h >> 21)) &* XXHash.p32_1
+                    i += 1
+                }
+                return XXHash._xxh32_avalanche(h)
+            }
+        }
+    }
+}
