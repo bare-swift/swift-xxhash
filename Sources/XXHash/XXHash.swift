@@ -30,4 +30,25 @@ public enum XXHash: Sendable {
             buf.baseAddress.map { _xxh64($0, buf.count, seed) } ?? (seed &+ p64_5)
         }
     }
+
+    /// XXH3-64 one-shot. 64-bit modern xxHash; substantially faster than XXH64.
+    /// Wire-compatible with the C reference (`xxhsum -H3`).
+    public static func xxh3_64(_ bytes: some Sequence<UInt8>, seed: UInt64 = 0) -> UInt64 {
+        let secret = _xxh3_customSecret(seed: seed)
+        if let result = bytes.withContiguousStorageIfAvailable({ buf -> UInt64 in
+            if let p = buf.baseAddress {
+                return _xxh3_64bits_internal(p, buf.count, seed, secret)
+            }
+            return _xxh64_avalanche(seed ^ _readLE64Secret(secret, 56) ^ _readLE64Secret(secret, 64))
+        }) {
+            return result
+        }
+        let array = Array(bytes)
+        return array.withUnsafeBufferPointer { buf in
+            if let p = buf.baseAddress {
+                return _xxh3_64bits_internal(p, buf.count, seed, secret)
+            }
+            return _xxh64_avalanche(seed ^ _readLE64Secret(secret, 56) ^ _readLE64Secret(secret, 64))
+        }
+    }
 }
