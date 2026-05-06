@@ -51,10 +51,11 @@ extension XXHash {
                 v3 = _xxh32_round(v3, _readLE32(buf, i));      i += 4
                 v4 = _xxh32_round(v4, _readLE32(buf, i));      i += 4
             }
-            hash = ((v1 << 1)  | (v1 >> 31))
-                 &+ ((v2 << 7)  | (v2 >> 25))
-                 &+ ((v3 << 12) | (v3 >> 20))
-                 &+ ((v4 << 18) | (v4 >> 14))
+            let r1: UInt32 = (v1 << 1)  | (v1 >> 31)
+            let r2: UInt32 = (v2 << 7)  | (v2 >> 25)
+            let r3: UInt32 = (v3 << 12) | (v3 >> 20)
+            let r4: UInt32 = (v4 << 18) | (v4 >> 14)
+            hash = r1 &+ r2 &+ r3 &+ r4
         } else {
             hash = seed &+ p32_5
         }
@@ -114,10 +115,11 @@ extension XXHash {
         public func finalize() -> UInt32 {
             var hash: UInt32
             if totalLen >= 16 {
-                hash = ((v1 << 1)  | (v1 >> 31))
-                     &+ ((v2 << 7)  | (v2 >> 25))
-                     &+ ((v3 << 12) | (v3 >> 20))
-                     &+ ((v4 << 18) | (v4 >> 14))
+                let r1: UInt32 = (v1 << 1)  | (v1 >> 31)
+                let r2: UInt32 = (v2 << 7)  | (v2 >> 25)
+                let r3: UInt32 = (v3 << 12) | (v3 >> 20)
+                let r4: UInt32 = (v4 << 18) | (v4 >> 14)
+                hash = r1 &+ r2 &+ r3 &+ r4
             } else {
                 hash = seed &+ XXHash.p32_5
             }

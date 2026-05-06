@@ -60,10 +60,11 @@ extension XXHash {
                 v3 = _xxh64_round(v3, _readLE64(buf, i));     i += 8
                 v4 = _xxh64_round(v4, _readLE64(buf, i));     i += 8
             }
-            hash = ((v1 << 1)  | (v1 >> 63))
-                 &+ ((v2 << 7)  | (v2 >> 57))
-                 &+ ((v3 << 12) | (v3 >> 52))
-                 &+ ((v4 << 18) | (v4 >> 46))
+            let r1: UInt64 = (v1 << 1)  | (v1 >> 63)
+            let r2: UInt64 = (v2 << 7)  | (v2 >> 57)
+            let r3: UInt64 = (v3 << 12) | (v3 >> 52)
+            let r4: UInt64 = (v4 << 18) | (v4 >> 46)
+            hash = r1 &+ r2 &+ r3 &+ r4
             hash = _xxh64_mergeRound(hash, v1)
             hash = _xxh64_mergeRound(hash, v2)
             hash = _xxh64_mergeRound(hash, v3)
@@ -134,10 +135,11 @@ extension XXHash {
         public func finalize() -> UInt64 {
             var hash: UInt64
             if totalLen >= 32 {
-                hash = ((v1 << 1)  | (v1 >> 63))
-                     &+ ((v2 << 7)  | (v2 >> 57))
-                     &+ ((v3 << 12) | (v3 >> 52))
-                     &+ ((v4 << 18) | (v4 >> 46))
+                let r1: UInt64 = (v1 << 1)  | (v1 >> 63)
+                let r2: UInt64 = (v2 << 7)  | (v2 >> 57)
+                let r3: UInt64 = (v3 << 12) | (v3 >> 52)
+                let r4: UInt64 = (v4 << 18) | (v4 >> 46)
+                hash = r1 &+ r2 &+ r3 &+ r4
                 hash = XXHash._xxh64_mergeRound(hash, v1)
                 hash = XXHash._xxh64_mergeRound(hash, v2)
                 hash = XXHash._xxh64_mergeRound(hash, v3)
